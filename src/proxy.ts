@@ -20,7 +20,7 @@ export async function readBody(req: IncomingMessage, limit = config.maxBodyBytes
 }
 
 let logCount = 0;
-function logRequest(e: { clientId: number; upstreamId: number | null; method: string; path: string; status: number; credits: number | null; attempts: number; ms: number }) {
+export function logRequest(e: { clientId: number; upstreamId: number | null; method: string; path: string; status: number; credits: number | null; attempts: number; ms: number }) {
   db.prepare("INSERT INTO request_log (ts, client_id, upstream_id, method, path, status, credits, attempts, ms) VALUES (?,?,?,?,?,?,?,?,?)")
     .run(Date.now(), e.clientId, e.upstreamId, e.method, e.path, e.status, e.credits, e.attempts, e.ms);
   db.prepare("UPDATE client_keys SET requests = requests + 1, credits_used = credits_used + ?, last_used_at = ? WHERE id = ?")

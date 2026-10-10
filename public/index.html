@@ -76,10 +76,16 @@ function render(s) {
           $('button', { class: 'ghost', onclick: async () => { await api(`/upstream/${u.id}`, 'PATCH', { enabled: !u.enabled }); load(); } }, u.enabled ? 'Tắt' : 'Bật'), ' ',
           $('button', { class: 'danger', onclick: async () => { if (confirm('Xoá key này?')) { await api(`/upstream/${u.id}`, 'DELETE'); load(); } } }, 'Xoá')))) ),
     keys, $('div', { class: 'row' }, $('button', { onclick: async () => {
+      let added = 0; const problems = [];
       for (const line of keys.value.split('\n').map(l => l.trim()).filter(Boolean)) {
         const i = line.indexOf(':');
-        await api('/upstream', 'POST', i > 0 && i < line.length - 8 ? { label: line.slice(0, i), key: line.slice(i + 1) } : { key: line });
+        const body = i > 0 && i < line.length - 8 ? { label: line.slice(0, i), key: line.slice(i + 1) } : { key: line };
+        const r = await fetch('/admin/api/upstream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        if (r.status === 401) { showLogin(); return; }
+        if (r.ok) added++; else problems.push('• ' + ((await r.json().catch(() => ({}))).error || r.statusText));
       }
+      if (problems.length) alert(`Đã thêm ${added} key. Không thêm được ${problems.length} key:\n\n` + problems.join('\n'));
+      keys.value = '';
       load();
     } }, 'Thêm key')));
 

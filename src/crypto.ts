@@ -30,6 +30,9 @@ export function decrypt(blob: string): string {
   return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString("utf8");
 }
 
+/** Dấu vân tay của API key (HMAC theo secret) để phát hiện key trùng mà không cần giải mã từng dòng. */
+export const fingerprint = (key: string) => createHmac("sha256", hmacKey).update("key:" + key).digest("hex");
+
 export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 export function safeEqual(a: string, b: string): boolean {

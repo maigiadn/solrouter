@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { config } from "./config.js";
-import { encrypt, maskKey, newClientToken, safeEqual, sha256, signSession, verifySession } from "./crypto.js";
+import { encrypt, fingerprint, maskKey, newClientToken, safeEqual, sha256, signSession, verifySession } from "./crypto.js";
 import { db, type UpstreamRow } from "./db.js";
 import { readBody } from "./proxy.js";
 import * as pool from "./pool.js";
@@ -89,8 +89,11 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, url
       const { label, key } = await parse(req);
       if (typeof key !== "string" || key.trim().length < 8) return json(res, 400, { error: "key không hợp lệ" });
       const k = key.trim();
-      const info = db.prepare("INSERT INTO upstream_keys (label, key_enc, key_mask, created_at) VALUES (?,?,?,?)")
-        .run(typeof label === "string" && label.trim() ? label.trim() : maskKey(k), encrypt(k), maskKey(k), Date.now());
+      const hash = fingerprint(k);
+      const dup = db.prepare("SELECT id, label FROM upstream_keys WHERE key_hash = ?").get(hash) as { id: number; label: string } | undefined;
+      if (dup) return json(res, 409, { error: `Key ${maskKey(k)} đã tồn tại (${dup.label})`, duplicate: true, existingId: dup.id });
+      const info = db.prepare("INSERT INTO upstream_keys (label, key_enc, key_mask, key_hash, created_at) VALUES (?,?,?,?,?)")
+        .run(typeof label === "string" && label.trim() ? label.trim() : maskKey(k), encrypt(k), maskKey(k), hash, Date.now());
       return json(res, 201, { id: Number(info.lastInsertRowid) });
     }
 

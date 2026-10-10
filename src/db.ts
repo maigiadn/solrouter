@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { config } from "./config.js";
+import { decrypt, fingerprint } from "./crypto.js";
 
 export const db = new DatabaseSync(join(config.dataDir, "solrouter.db"));
 db.exec(`
@@ -45,6 +46,18 @@ CREATE TABLE IF NOT EXISTS request_log (
   ms INTEGER NOT NULL
 );
 `);
+
+// Migration: cột key_hash để phát hiện key trùng (key cũ được điền lại bằng cách giải mã một lần)
+if (!(db.prepare("PRAGMA table_info(upstream_keys)").all() as { name: string }[]).some((c) => c.name === "key_hash")) {
+  db.exec("ALTER TABLE upstream_keys ADD COLUMN key_hash TEXT");
+}
+for (const r of db.prepare("SELECT id, key_enc FROM upstream_keys WHERE key_hash IS NULL").all() as { id: number; key_enc: string }[]) {
+  try { db.prepare("UPDATE upstream_keys SET key_hash = ? WHERE id = ?").run(fingerprint(decrypt(r.key_enc)), r.id); }
+  catch { console.error(`Không giải mã được upstream key #${r.id} (APP_SECRET đã đổi?)`); }
+}
+// Nếu DB cũ đã có sẵn key trùng thì bỏ qua index, vẫn chặn thêm trùng ở tầng API
+try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_upstream_key_hash ON upstream_keys(key_hash)"); }
+catch { console.error("DB đang có API key trùng nhau — hãy xoá bớt; chưa tạo được unique index"); }
 
 export interface UpstreamRow {
   id: number;
