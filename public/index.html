@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solrouter</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1a1d23;--mut:#6b7280;--line:#e3e6eb;--acc:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--mut:#9aa1ad;--line:#272b34;--acc:#6ea0ff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0 16px;display:flex;justify-content:space-between;align-items:center}
+section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px;overflow-x:auto}
+h2{font-size:15px;margin:0 0 12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mut);font-weight:500}
+input,textarea{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
+textarea{width:100%;min-height:70px;font-family:ui-monospace,monospace}
+button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}button.danger{background:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.mut{color:var(--mut)}
+code{font-family:ui-monospace,monospace}
+.token{background:var(--bg);border:1px dashed var(--acc);padding:8px;border-radius:6px;margin-top:10px;word-break:break-all}
+#login{max-width:320px;margin:20vh auto}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const app = document.getElementById('app');
+const $ = (tag, props = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'class') e.className = v;
+    else e[k] = v;
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c);
+  return e;
+};
+async function api(path, method = 'GET', body) {
+  const r = await fetch('/admin/api' + path, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('unauthorized'); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(data.error || r.statusText); throw new Error(data.error); }
+  return data;
+}
+const fmt = n => n == null ? '—' : n.toLocaleString('en-US');
+const ago = t => { if (!t) return '—'; const s = Math.floor((Date.now() - t) / 1000); return s < 60 ? s + 's trước' : s < 3600 ? Math.floor(s / 60) + 'p trước' : s < 86400 ? Math.floor(s / 3600) + 'h trước' : Math.floor(s / 86400) + 'd trước'; };
+
+function showLogin() {
+  const pw = $('input', { type: 'password', placeholder: 'Mật khẩu admin', autofocus: true });
+  const go = async () => { await api('/login', 'POST', { password: pw.value }); load(); };
+  pw.addEventListener('keydown', e => e.key === 'Enter' && go());
+  app.replaceChildren($('section', { id: 'login' }, $('h2', {}, 'Solrouter'), pw, $('div', { class: 'row' }, $('button', { onclick: go }, 'Đăng nhập'))));
+}
+
+let newToken = null;
+function render(s) {
+  const statusCell = u => u.status === 'invalid' ? $('span', { class: 'bad' }, 'key sai')
+    : u.status === 'exhausted' ? $('span', { class: 'warn' }, 'hết credits')
+    : u.cooling ? $('span', { class: 'warn' }, 'cooldown') : $('span', { class: 'ok' }, 'sẵn sàng');
+  const keys = $('textarea', { placeholder: 'Mỗi dòng một key (tuỳ chọn: nhãn:key)' });
+  const total = s.upstream.reduce((a, u) => a + (u.creditsRemaining || 0), 0);
+
+  const upstream = $('section', {}, $('h2', {}, `API key fomoapi.io (${s.upstream.length}) — tổng credits còn lại ≈ ${fmt(total)}`),
+    $('table', {}, $('tr', {}, ['Nhãn', 'Key', 'Trạng thái', 'Credits còn', 'Requests', 'Lỗi', 'Dùng gần nhất', 'Lỗi cuối', ''].map(h => $('th', {}, h))),
+      s.upstream.map(u => $('tr', {},
+        $('td', {}, u.label), $('td', {}, $('code', {}, u.mask)), $('td', {}, statusCell(u)),
+        $('td', {}, fmt(u.creditsRemaining)), $('td', {}, fmt(u.requests)), $('td', {}, fmt(u.errors)),
+        $('td', {}, ago(u.lastUsedAt)), $('td', { class: 'mut' }, u.lastError || ''),
+        $('td', {},
+          $('button', { class: 'ghost', onclick: async () => { await api(`/upstream/${u.id}/refresh`, 'POST'); load(); } }, 'Làm mới'), ' ',
+          $('button', { class: 'ghost', onclick: async () => { await api(`/upstream/${u.id}`, 'PATCH', { reset: true }); load(); } }, 'Reset'), ' ',
+          $('button', { class: 'ghost', onclick: async () => { await api(`/upstream/${u.id}`, 'PATCH', { enabled: !u.enabled }); load(); } }, u.enabled ? 'Tắt' : 'Bật'), ' ',
+          $('button', { class: 'danger', onclick: async () => { if (confirm('Xoá key này?')) { await api(`/upstream/${u.id}`, 'DELETE'); load(); } } }, 'Xoá')))) ),
+    keys, $('div', { class: 'row' }, $('button', { onclick: async () => {
+      for (const line of keys.value.split('\n').map(l => l.trim()).filter(Boolean)) {
+        const i = line.indexOf(':');
+        await api('/upstream', 'POST', i > 0 && i < line.length - 8 ? { label: line.slice(0, i), key: line.slice(i + 1) } : { key: line });
+      }
+      load();
+    } }, 'Thêm key')));
+
+  const label = $('input', { placeholder: 'Tên service (vd: bot-a)' });
+  const clients = $('section', {}, $('h2', {}, 'Router key cho các service'),
+    $('table', {}, $('tr', {}, ['Service', 'Prefix', 'Requests', 'Credits đã dùng', 'Dùng gần nhất', ''].map(h => $('th', {}, h))),
+      s.clients.map(c => $('tr', {},
+        $('td', {}, c.label), $('td', {}, $('code', {}, c.prefix + '…')), $('td', {}, fmt(c.requests)), $('td', {}, fmt(c.creditsUsed)), $('td', {}, ago(c.lastUsedAt)),
+        $('td', {},
+          $('button', { class: 'ghost', onclick: async () => { await api(`/clients/${c.id}`, 'PATCH', { enabled: !c.enabled }); load(); } }, c.enabled ? 'Tắt' : 'Bật'), ' ',
+          $('button', { class: 'danger', onclick: async () => { if (confirm('Xoá router key này?')) { await api(`/clients/${c.id}`, 'DELETE'); load(); } } }, 'Xoá'))))),
+    $('div', { class: 'row' }, label, $('button', { onclick: async () => { if (!label.value.trim()) return; newToken = (await api('/clients', 'POST', { label: label.value })).token; load(); } }, 'Tạo router key')),
+    newToken && $('div', { class: 'token' }, $('div', { class: 'mut' }, 'Sao chép ngay, key chỉ hiện một lần:'), $('code', {}, newToken)));
+
+  const logs = $('section', {}, $('h2', {}, 'Request gần đây'),
+    $('table', {}, $('tr', {}, ['Thời gian', 'Service', 'Key', 'Request', 'Status', 'Credits', 'Thử', 'ms'].map(h => $('th', {}, h))),
+      s.logs.map(l => $('tr', {}, $('td', {}, ago(l.ts)), $('td', {}, l.client || '—'), $('td', {}, l.upstream || '—'),
+        $('td', {}, `${l.method} ${l.path}`), $('td', { class: l.status < 400 ? 'ok' : 'bad' }, String(l.status)), $('td', {}, fmt(l.credits)), $('td', {}, String(l.attempts)), $('td', {}, String(l.ms))))));
+
+  app.replaceChildren($('h1', {}, 'Solrouter', $('button', { class: 'ghost', onclick: async () => { await api('/logout', 'POST'); showLogin(); } }, 'Đăng xuất')), upstream, clients, logs);
+}
+async function load() { try { render(await api('/state')); } catch {} }
+load(); setInterval(() => { if (!document.hidden && !document.activeElement?.matches('input,textarea')) load(); }, 15000);
+</script>
+</body>
+</html>
